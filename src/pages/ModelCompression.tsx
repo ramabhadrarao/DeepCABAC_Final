@@ -1,8 +1,9 @@
+// Update the ModelCompression.tsx component to use the global model store
+
 import React, { useState, useEffect } from 'react';
 import { Zap, AlertTriangle, Info } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { useModelTrainingContext } from '../contexts/ModelContext';
-import { useAuth } from '../contexts/AuthContext';
+import { getCurrentModel, getStoredModels, subscribeToModelChanges, StoredModel } from '../utils/modelStore';
 
 interface CompressionStats {
   originalSize: number;
@@ -20,19 +21,31 @@ interface LayerMetrics {
 }
 
 const ModelCompression: React.FC = () => {
-  const { model, storedModels, selectedModelId, selectModel, getSelectedModelInfo } = useModelTrainingContext();
-  const { isAdmin } = useAuth();
+  const [model, setModel] = useState(getCurrentModel());
+  const [storedModels, setStoredModels] = useState(getStoredModels());
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(storedModels.length > 0 ? storedModels[0].id : null);
   const [compressionStats, setCompressionStats] = useState<CompressionStats | null>(null);
   const [isCompressing, setIsCompressing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pruningRate, setPruningRate] = useState(0.5);
   const [bits, setBits] = useState(8);
 
-  // Check if there are any models available
-  const hasModels = storedModels.length > 0;
-  
-  // Get the selected model info
-  const selectedModelInfo = getSelectedModelInfo();
+  // Subscribe to model changes
+  useEffect(() => {
+    const unsubscribe = subscribeToModelChanges(() => {
+      setModel(getCurrentModel());
+      setStoredModels(getStoredModels());
+    });
+    
+    return unsubscribe;
+  }, []);
+
+  // Update selected model when stored models change
+  useEffect(() => {
+    if (storedModels.length > 0 && !selectedModelId) {
+      setSelectedModelId(storedModels[0].id);
+    }
+  }, [storedModels, selectedModelId]);
 
   const handleCompress = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -70,6 +83,15 @@ const ModelCompression: React.FC = () => {
     }
   };
 
+  // Get the selected model info
+  const getSelectedModelInfo = (): StoredModel | null => {
+    if (!selectedModelId) return null;
+    return storedModels.find(model => model.id === selectedModelId) || null;
+  };
+
+  const selectedModelInfo = getSelectedModelInfo();
+  const hasModels = storedModels.length > 0;
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="text-center mb-12">
@@ -106,24 +128,21 @@ const ModelCompression: React.FC = () => {
             </label>
             <select
               value={selectedModelId || ''}
-              onChange={(e) => selectModel(e.target.value || null)}
+              onChange={(e) => setSelectedModelId(e.target.value || null)}
               className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500"
             >
               {storedModels.map((storedModel) => (
                 <option key={storedModel.id} value={storedModel.id}>
-                  {storedModel.name} ({storedModel.accuracy > 0 
-                    ? `${(storedModel.accuracy * 100).toFixed(1)}% accuracy` 
-                    : 'Accuracy unknown'})
+                  {storedModel.name} ({(storedModel.accuracy * 100).toFixed(1)}% accuracy)
                 </option>
               ))}
             </select>
             
             {selectedModelInfo && (
               <div className="mt-2 bg-gray-50 p-3 rounded-md text-sm">
-                <p><span className="font-medium">Dataset:</span> {selectedModelInfo.datasetType}</p>
+                <p><span className="font-medium">Dataset:</span> {selectedModelInfo.dataset}</p>
                 <p><span className="font-medium">Parameters:</span> {selectedModelInfo.parameters.toLocaleString()}</p>
-                <p><span className="font-medium">Trained by:</span> {selectedModelInfo.trainedBy}</p>
-                <p><span className="font-medium">Trained at:</span> {new Date(selectedModelInfo.trainedAt).toLocaleString()}</p>
+                <p><span className="font-medium">Created at:</span> {new Date(selectedModelInfo.createdAt).toLocaleString()}</p>
               </div>
             )}
           </div>
@@ -135,10 +154,7 @@ const ModelCompression: React.FC = () => {
               </div>
               <div className="ml-3">
                 <p className="text-sm text-yellow-800">
-                  {isAdmin 
-                    ? "No trained models available. Please train a model first."
-                    : "No trained models available. Please ask an administrator to train a model."
-                  }
+                  No trained models available. Please train a model first.
                 </p>
               </div>
             </div>
@@ -204,10 +220,7 @@ const ModelCompression: React.FC = () => {
         {!hasModels && (
           <div className="mt-4 p-4 bg-yellow-50 rounded-lg border border-yellow-100">
             <p className="text-yellow-700 text-sm">
-              {isAdmin 
-                ? "Please train a model first before attempting compression."
-                : "Please wait for an administrator to train a model before compression."
-              }
+              Please train a model first before attempting compression.
             </p>
           </div>
         )}
@@ -263,22 +276,6 @@ const ModelCompression: React.FC = () => {
                   {(compressionStats.compressedSize / (1024 * 1024)).toFixed(2)} MB
                 </div>
               </div>
-            </div>
-
-            {/* Download buttons */}
-            <div className="mt-4 grid grid-cols-2 gap-4">
-              <button
-                className="w-full py-2 px-4 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors"
-                onClick={() => {/* Add download logic */}}
-              >
-                Download Full Model
-              </button>
-              <button
-                className="w-full py-2 px-4 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
-                onClick={() => {/* Add download logic */}}
-              >
-                Download Compressed Model
-              </button>
             </div>
           </div>
         )}

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import * as tf from '@tensorflow/tfjs';
+import { setCurrentModel } from '../utils/modelStore';
 
 interface TrainingProgress {
   epoch: number;
@@ -545,48 +546,82 @@ const useModelTraining = () => {
     return accuracy;
   };
 
-  const handleTrain = async (datasetType: DatasetType, epochs: number = 10) => {
-    try {
-      setIsTraining(true);
-      setError(null);
-      setTrainingProgress([]);
-  
-      const model = createModel(datasetType);
-      const trainingData = await loadDataset(datasetType);
-  
-      if (!trainingData || !trainingData.xs.shape || trainingData.xs.shape[0] !== trainingData.ys.shape[0]) {
-        throw new Error('Invalid data shapes');
-      }
-  
-      await model.fit(trainingData.xs, trainingData.ys, {
-        epochs: epochs, // Use the passed epochs parameter
-        batchSize: 32,
-        validationSplit: 0.2,
-        shuffle: true,
-        callbacks: {
-          onEpochEnd: (epoch, logs) => {
-            if (!logs) return;
-            
-            setTrainingProgress(prev => [...prev, {
-              epoch,
-              loss: Number(logs.loss.toFixed(4)),
-              accuracy: Number(logs.acc.toFixed(4))
-            }]);
-          },
-          onBatchEnd: async () => {
-            await tf.nextFrame(); // Prevent UI blocking
-          }
-        }
-      });
-  
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(`Training failed: ${errorMessage}`);
-      console.error('Training error:', errorMessage);
-    } finally {
-      setIsTraining(false);
+  // Then modify your handleTrain function to save the model without creating test data:
+const handleTrain = async (datasetType: DatasetType, epochs: number = 10) => {
+  try {
+    setIsTraining(true);
+    setError(null);
+    setTrainingProgress([]);
+
+    const model = createModel(datasetType);
+    const trainingData = await loadDataset(datasetType);
+
+    if (!trainingData || !trainingData.xs.shape || trainingData.xs.shape[0] !== trainingData.ys.shape[0]) {
+      throw new Error('Invalid data shapes');
     }
-  };
+
+    await model.fit(trainingData.xs, trainingData.ys, {
+      epochs: epochs,
+      batchSize: 32,
+      validationSplit: 0.2,
+      shuffle: true,
+      callbacks: {
+        onEpochEnd: (epoch, logs) => {
+          if (!logs) return;
+          
+          setTrainingProgress(prev => [...prev, {
+            epoch,
+            loss: Number(logs.loss.toFixed(4)),
+            accuracy: Number(logs.acc.toFixed(4))
+          }]);
+        },
+        onBatchEnd: async () => {
+          await tf.nextFrame(); // Prevent UI blocking
+        }
+      }
+    });
+
+    // After successful training, evaluate the model to get accuracy
+    let accuracy = 0;
+    if (testDataRef.current) {
+      const result = await model.evaluate(
+        testDataRef.current.xs,
+        testDataRef.current.ys,
+        { batchSize: 32 }
+      );
+      
+      accuracy = Array.isArray(result) 
+        ? result[1].dataSync()[0] 
+        : result.dataSync()[0];
+        
+      // Cleanup tensors
+      if (Array.isArray(result)) {
+        result.forEach(t => t.dispose());
+      } else {
+        result.dispose();
+      }
+    }
+
+    // Save the model to the global store with metadata
+    // IMPORTANT: We don't dispose the model here anymore, or its layers will be unusable
+    setCurrentModel(model, {
+      name: `${datasetType.toUpperCase()} Model - ${new Date().toLocaleString()}`,
+      dataset: datasetType,
+      accuracy,
+      parameters: model.countParams()
+    });
+
+    // Update the reference
+    modelRef.current = model;
+
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    setError(`Training failed: ${errorMessage}`);
+    console.error('Training error:', errorMessage);
+  } finally {
+    setIsTraining(false);
+  }
+};
 
   useEffect(() => {
     return () => {
